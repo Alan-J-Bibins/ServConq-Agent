@@ -5,6 +5,7 @@ import (
 	"log"
 	"os/exec"
 	"runtime"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
@@ -14,15 +15,26 @@ import (
 )
 
 func main() {
-	// Setup localtunnel listener
-	fmt.Println("Welcome to ServConq!\n\nTo get started with connecting your server copy the connection string given below and paste it in the form for creating a new server")
+	for {
+		err := startAgentServer()
+		if err != nil {
+			log.Printf("Agent crashed: %v. Retrying in 5 seconds...", err)
+			time.Sleep(5 * time.Second) // Wait before retrying
+			continue
+		}
+		break
+	}
+}
+
+func startAgentServer() error {
+	fmt.Println("Welcome to ServConq!")
 	listener, err := localtunnel.Listen(localtunnel.Options{})
 	if err != nil {
-		log.Fatalf("localtunnel listen error: %v", err)
+		return fmt.Errorf("localtunnel listen error: %w", err)
 	}
 	defer listener.Close()
-	fmt.Println("status check 1")
 
+	fmt.Println("status check 1")
 	url := listener.Addr().String()
 	fmt.Printf("ServConq Agent Connection String: %s\n", url)
 
@@ -34,21 +46,20 @@ func main() {
 		return c.SendString("Hello from Fiber over LocalTunnel!")
 	})
 	app.Get("/metrics", monitor.New(monitor.Config{APIOnly: true}))
-
 	app.Post("/run", AgentRunCommandHandler)
-
 	fmt.Println("status check 3")
-	// Wrap connection with fasthttp.Server
+
 	server := &fasthttp.Server{
-		Handler: app.Handler(), // this is a fasthttp.RequestHandler
+		Handler: app.Handler(),
 	}
 	fmt.Println("status check 4")
 
-	// Serve using fasthttp.Server on the localtunnel listener
-	if err := server.Serve(listener); err != nil {
-		log.Fatalf("fasthttp server error: %v", err)
+	err = server.Serve(listener)
+	if err != nil {
+		return fmt.Errorf("fasthttp server error: %w", err)
 	}
 	fmt.Println("status check 5")
+	return nil
 }
 
 func AgentRunCommandHandler(c *fiber.Ctx) error {
@@ -73,8 +84,5 @@ func AgentRunCommandHandler(c *fiber.Ctx) error {
 			"output": string(out),
 		})
 	}
-
-	return c.JSON(fiber.Map{
-		"output": string(out),
-	})
+	return c.JSON(fiber.Map{"output": string(out)})
 }
