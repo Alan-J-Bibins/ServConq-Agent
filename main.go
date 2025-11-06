@@ -5,6 +5,7 @@ import (
 	"log"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -34,55 +35,81 @@ func startAgentServer() error {
 	}
 	defer listener.Close()
 
-	fmt.Println("status check 1")
 	url := listener.Addr().String()
 	fmt.Printf("ServConq Agent Connection String: %s\n", url)
 
 	app := fiber.New()
 	app.Use(logger.New())
-	fmt.Println("status check 2")
 
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.SendString("Hello from Fiber over LocalTunnel!")
 	})
 	app.Get("/metrics", monitor.New(monitor.Config{APIOnly: true}))
 	app.Post("/run", AgentRunCommandHandler)
-	fmt.Println("status check 3")
 
 	server := &fasthttp.Server{
 		Handler: app.Handler(),
 	}
-	fmt.Println("status check 4")
 
 	err = server.Serve(listener)
 	if err != nil {
 		return fmt.Errorf("fasthttp server error: %w", err)
 	}
-	fmt.Println("status check 5")
+
 	return nil
 }
 
 func AgentRunCommandHandler(c *fiber.Ctx) error {
 	var req struct {
 		Command string `json:"command"`
+		Pwd     string `json:"pwd"`
 	}
+	log.Println("[main.go:63] req = ", req.Pwd)
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid request"})
 	}
 
 	var cmd *exec.Cmd
+	prefix := ""
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("powershell", "-Command", req.Command)
+		if req.Pwd == "||$$$HOME$$$||" {
+			prefix = "cd $env:USERPROFILE; "
+		} else {
+			prefix = "cd " + req.Pwd + "; "
+		}
+		cmd = exec.Command("powershell", "-Command", prefix+req.Command+"; pwd")
 	} else {
-		cmd = exec.Command("bash", "-c", req.Command)
+		if req.Pwd == "||$$$HOME$$$||" {
+			prefix = "cd $HOME; "
+		} else {
+			prefix = "cd " + req.Pwd + "; "
+		}
+		commandToBeRun := prefix + req.Command + "; pwd"
+		log.Println("[main.go:86] commandToBeRun = ", commandToBeRun)
+		cmd = exec.Command("bash", "-c", commandToBeRun)
 	}
 
 	out, err := cmd.CombinedOutput()
+	outputStr := string(out)
+	pwd := "||$$$HOME$$$||"
+	cmdOutput := ""
+	lines := strings.Split(outputStr, "\n")
+	if len(lines) != 0 {
+		pwd = strings.TrimSpace(lines[len(lines)-2])
+		cmdOutput = strings.Join(lines[:len(lines)-2], "\n")
+	}
+
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"error":  err.Error(),
-			"output": string(out),
+			"output": cmdOutput,
+			"pwd":    pwd,
 		})
 	}
-	return c.JSON(fiber.Map{"output": string(out)})
+
+	return c.JSON(fiber.Map{
+		"output": cmdOutput,
+		"pwd":    pwd,
+		"error":  err,
+	})
 }
