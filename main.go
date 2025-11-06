@@ -79,7 +79,7 @@ func AgentRunCommandHandler(c *fiber.Ctx) error {
 		} else {
 			prefix = "cd " + req.Pwd + "; "
 		}
-		cmd = exec.Command("powershell", "-Command", prefix+req.Command+"; echo"+delimiter+"; pwd")
+		cmd = exec.Command("powershell", "-Command", prefix+req.Command+"; echo "+delimiter+"; (Get-Location).Path")
 	} else {
 		if req.Pwd == "||$$$HOME$$$||" {
 			prefix = "cd $HOME; "
