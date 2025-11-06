@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -19,8 +20,8 @@ func main() {
 	for {
 		err := startAgentServer()
 		if err != nil {
-			log.Printf("Agent crashed: %v. Retrying in 5 seconds...", err)
-			time.Sleep(5 * time.Second) // Wait before retrying
+			log.Printf("Agent crashed: %v. Retrying in 2 seconds...", err)
+			time.Sleep(2 * time.Second)
 			continue
 		}
 		break
@@ -71,20 +72,21 @@ func AgentRunCommandHandler(c *fiber.Ctx) error {
 
 	var cmd *exec.Cmd
 	prefix := ""
+	delimiter := "==============="
 	if runtime.GOOS == "windows" {
 		if req.Pwd == "||$$$HOME$$$||" {
 			prefix = "cd $env:USERPROFILE; "
 		} else {
 			prefix = "cd " + req.Pwd + "; "
 		}
-		cmd = exec.Command("powershell", "-Command", prefix+req.Command+"; pwd")
+		cmd = exec.Command("powershell", "-Command", prefix+req.Command+"; echo"+delimiter+"; pwd")
 	} else {
 		if req.Pwd == "||$$$HOME$$$||" {
 			prefix = "cd $HOME; "
 		} else {
 			prefix = "cd " + req.Pwd + "; "
 		}
-		commandToBeRun := prefix + req.Command + "; pwd"
+		commandToBeRun := prefix + req.Command + "; echo" + delimiter + "; pwd"
 		log.Println("[main.go:86] commandToBeRun = ", commandToBeRun)
 		cmd = exec.Command("bash", "-c", commandToBeRun)
 	}
@@ -93,10 +95,32 @@ func AgentRunCommandHandler(c *fiber.Ctx) error {
 	outputStr := string(out)
 	pwd := "||$$$HOME$$$||"
 	cmdOutput := ""
-	lines := strings.Split(outputStr, "\n")
-	if len(lines) != 0 {
-		pwd = strings.TrimSpace(lines[len(lines)-2])
-		cmdOutput = strings.Join(lines[:len(lines)-2], "\n")
+	var pwdRegex = regexp.MustCompile(`^(/[^/\0]+)+/?$|^[a-zA-Z]:\\(?:[^\\\0]+\\?)*$`)
+
+	parts := strings.Split(outputStr, delimiter)
+	if len(parts) == 2 {
+		cmdOutput = parts[0]
+		after := strings.Split(parts[1], "\n")
+		for _, line := range after {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				pwd = line
+				break
+			}
+		}
+	} else {
+		lines := strings.Split(outputStr, "\n")
+		if len(lines) != 0 {
+			pwd = strings.TrimSpace(lines[len(lines)-2])
+			cmdOutput = strings.Join(lines[:len(lines)-2], "\n")
+		}
+	}
+
+	log.Println("[main.go:99] cmdOutput = ", cmdOutput)
+	log.Println("[main.go:98] pwd = ", pwd)
+
+	if !pwdRegex.MatchString(pwd) {
+		pwd = "||$$$HOME$$$||"
 	}
 
 	if err != nil {
